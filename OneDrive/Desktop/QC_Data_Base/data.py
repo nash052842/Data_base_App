@@ -13,7 +13,6 @@ st.set_page_config(
 # ---------- DATABASE CONNECTION ----------
 conn = sqlite3.connect("app.db", check_same_thread=False)
 cursor = conn.cursor()
-
 # ---------- CREATE TABLE ----------
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
@@ -24,7 +23,8 @@ CREATE TABLE IF NOT EXISTS users (
     Market TEXT,
     counts INTEGER DEFAULT 0,
     benchmark INTEGER DEFAULT 0,
-    customer_name TEXT
+    customer_name TEXT,
+    remarks TEXT
 )
 """)
 conn.commit()
@@ -45,7 +45,6 @@ st.info(f"📅 Week Number: {week}")
 product = st.text_input("Product")
 market = st.text_input("Market")
 customer_name = st.text_input("Customer Name")
-
 counts = st.number_input(
     "Counts",
     min_value=0,
@@ -59,6 +58,7 @@ benchmark = st.number_input(
     step=1,
     value=0
 )
+remarks = st.text_area("Remarks")   
 
 # ---------- SAVE DATA ----------
 if st.button("💾 Save to Database"):
@@ -77,9 +77,10 @@ if st.button("💾 Save to Database"):
                         Market,
                         counts,
                         benchmark,
-                        customer_name
+                        customer_name,
+                        remarks
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     int(week),
                     str(date_value),
@@ -87,7 +88,8 @@ if st.button("💾 Save to Database"):
                     market.strip(),
                     int(counts),
                     int(benchmark),
-                    customer_name.strip()
+                    customer_name.strip(),
+                    remarks.strip()
                 ))
 
             # Update Excel automatically
@@ -120,7 +122,8 @@ try:
             Market,
             counts,
             benchmark,
-            customer_name
+            customer_name,
+            remarks
         FROM users
         ORDER BY id DESC
     """, conn)
@@ -192,3 +195,4 @@ try:
 
 except Exception as e:
     st.error(f"Error loading data: {e}")
+
