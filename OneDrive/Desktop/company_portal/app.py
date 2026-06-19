@@ -106,10 +106,16 @@ conn.commit()
 # -----------------------------
 cursor.execute("SELECT COUNT(*) FROM users")
 if cursor.fetchone()[0] == 0:
-    cursor.execute("""
+    cursor.executemany("""
     INSERT INTO users (username, password, role, department)
     VALUES (?, ?, ?, ?)
-    """, ("admin", "1234", "admin", "DataScience"))
+    """, [
+        ("admin", "1234", "admin", "DataScience"),
+        ("simon", "2345", "phytoseilus", "phytoseilus"),
+        ("faith ", "3456", "bio_mulch", "bio_mulch"),
+        ("julia", "4567", "montdorensis", "montdorensis"),
+        ("judy", "5678", "qc", "quality_control"),
+    ])
     conn.commit()
 
 # -----------------------------
