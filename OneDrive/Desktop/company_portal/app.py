@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
+import io
 
 # -----------------------------
 # APP CONFIG
@@ -20,6 +21,7 @@ st.markdown("""
 }
 </style>
 """, unsafe_allow_html=True)
+
 
 # -----------------------------
 # DB CONNECTION
@@ -102,53 +104,43 @@ CREATE TABLE IF NOT EXISTS bio_mulch (
 conn.commit()
 
 # -----------------------------
-# DEFAULT ADMIN
+# DEFAULT USER
 # -----------------------------
 cursor.execute("SELECT COUNT(*) FROM users")
 if cursor.fetchone()[0] == 0:
-    cursor.executemany("""
+    cursor.execute("""
     INSERT INTO users (username, password, role, department)
     VALUES (?, ?, ?, ?)
-    """, [
-        ("admin", "1234", "admin", "DataScience"),
-        ("simon", "2345", "phytoseilus", "phytoseilus"),
-        ("faith ", "3456", "bio_mulch", "bio_mulch"),
-        ("julia", "4567", "montdorensis", "montdorensis"),
-        ("judy", "5678", "qc", "quality_control"),
-    ])
+    """, ("admin", "1234", "admin", "DataScience"))
     conn.commit()
 
 # -----------------------------
-# SESSION STATE
+# SESSION
 # -----------------------------
 if "user" not in st.session_state:
     st.session_state.user = None
     st.session_state.role = None
-    st.session_state.department = None
 
 # -----------------------------
 # LOGIN
 # -----------------------------
 if st.session_state.user is None:
 
-    st.title("Company Portal Login")
+    st.title("Login")
 
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
+    u = st.text_input("Username")
+    p = st.text_input("Password", type="password")
 
     if st.button("Login"):
         cursor.execute("""
-        SELECT role, department
-        FROM users
-        WHERE username=? AND password=?
-        """, (username, password))
+        SELECT role FROM users WHERE username=? AND password=?
+        """, (u, p))
 
-        user = cursor.fetchone()
+        res = cursor.fetchone()
 
-        if user:
-            st.session_state.user = username
-            st.session_state.role = user[0].lower()
-            st.session_state.department = user[1]
+        if res:
+            st.session_state.user = u
+            st.session_state.role = res[0].strip().lower()
             st.rerun()
         else:
             st.error("Invalid login")
@@ -159,81 +151,93 @@ if st.session_state.user is None:
 # DASHBOARD
 # -----------------------------
 st.title("Company Dashboard")
+
 st.write("User:", st.session_state.user)
 st.write("Role:", st.session_state.role)
-st.write("Department:", st.session_state.department)
+
+view = st.selectbox("View Data", ["Show", "Hide"])
+search = st.text_input("Search all tables")
 
 # -----------------------------
-# LOAD FUNCTION (FILTERS)
+# ROLE TABLE MAP
 # -----------------------------
-def load_table(table, date_filter=None, batch_filter=None):
-    query = f"SELECT * FROM {table} WHERE 1=1"
-    params = []
-
-    if date_filter:
-        query += " AND date = ?"
-        params.append(str(date_filter))
-
-    if batch_filter:
-        query += " AND batch_id LIKE ?"
-        params.append(f"%{batch_filter}%")
-
-    return pd.read_sql_query(query, conn, params=params)
-
-# -----------------------------
-# ROLE ACCESS TABLES
-# -----------------------------
-st.title("📊 Department Data")
-
 role = st.session_state.role
 
-if role == "admin":
-    allowed_tables = ["quality_control", "montdorensis", "phytoseilus", "bio_mulch"]
-elif role == "qc":
-    allowed_tables = ["quality_control"]
-elif role == "montdorensis":
-    allowed_tables = ["montdorensis"]
-elif role == "phytoseilus":
-    allowed_tables = ["phytoseilus"]
-elif role == "bio_mulch":
-    allowed_tables = ["bio_mulch"]
+tables_map = {
+    "admin": ["quality_control", "montdorensis", "phytoseilus", "bio_mulch"],
+    "qc": ["quality_control"],
+    "montdorensis": ["montdorensis"],
+    "phytoseilus": ["phytoseilus"],
+    "bio_mulch": ["bio_mulch"]
+}
+
+tables = tables_map.get(role, [])
+
+# -----------------------------
+# HELPERS
+# -----------------------------
+def load_table(table, search=None):
+    df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
+
+    if search:
+        search = search.lower()
+        df = df[df.astype(str).apply(
+            lambda r: r.str.lower().str.contains(search).any(),
+            axis=1
+        )]
+
+    return df
+
+def to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
+    return output.getvalue()
+
+# -----------------------------
+# VIEW DATA
+# -----------------------------
+if view == "Show":
+
+    st.title("Saved Data")
+
+    for t in tables:
+
+        st.subheader(t)
+
+        df = load_table(t, search)
+
+        st.dataframe(df, use_container_width=True)
+
+        st.download_button(
+            "Download Excel",
+            data=to_excel(df),
+            file_name=f"{t}.xlsx"
+        )
+
+        if "counts" in df.columns:
+            st.line_chart(df.set_index("date")["counts"])
+
 else:
-    allowed_tables = []
+    st.info("Data hidden")
 
 # -----------------------------
-# TABLES WITH INDIVIDUAL FILTERS
+# QC FORM
 # -----------------------------
-for t in allowed_tables:
+if role in ["admin", "qc"]:
 
-    st.subheader(f"📊 {t}")
+    st.title("Quality Control")
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-        date_filter = st.date_input(f"{t} - Date Filter", key=f"date_{t}")
-
-    with col2:
-        batch_filter = st.text_input(f"{t} - Batch Filter", key=f"batch_{t}")
-
-    st.dataframe(load_table(t, date_filter, batch_filter))
-
-# -----------------------------
-# QUALITY CONTROL ENTRY
-# -----------------------------
-if st.session_state.role in ["admin", "qc"]:
-
-    st.title("Quality Control Entry")
-
-    with st.form("qc_form"):
+    with st.form("qc"):
         date = st.date_input("Date")
-        batch_id = st.text_input("Batch ID")
+        batch = st.text_input("Batch ID")
         product = st.text_input("Product")
-        counts = st.number_input("Counts", min_value=0)
-        cfus_ml = st.number_input("CFUs/ml", format="%e")
-        cfu_gm = st.number_input("CFU/gm", format="%e")
+        counts = st.number_input("Counts")
+        cfus = st.number_input("CFUs/ml")
+        cfu_gm = st.number_input("CFU/gm")
         viability = st.number_input("Viability")
-        contamination = st.number_input("Contamination", format="%e")
-        benchmark = st.number_input("Benchmark", format="%e")
+        contamination = st.number_input("Contamination")
+        benchmark = st.number_input("Benchmark")
         result = st.selectbox("Result", ["Pass", "Fail"])
 
         if st.form_submit_button("Save"):
@@ -244,25 +248,23 @@ if st.session_state.role in ["admin", "qc"]:
                 contamination, benchmark, result
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                str(date), batch_id, product, counts,
-                cfus_ml, cfu_gm, viability,
-                contamination, benchmark, result
-            ))
+            """, (str(date), batch, product, counts,
+                  cfus, cfu_gm, viability,
+                  contamination, benchmark, result))
             conn.commit()
             st.success("Saved")
 
 # -----------------------------
-# MONTDORENSIS ENTRY
+# MONTDORENSIS FORM
 # -----------------------------
-if st.session_state.role in ["admin", "montdorensis"]:
+if role in ["admin", "montdorensis"]:
 
-    st.title("Montdorensis Entry")
+    st.title("Montdorensis")
 
-    with st.form("mont_form"):
+    with st.form("mont"):
         date = st.date_input("Date")
-        batch_id = st.text_input("Batch ID")
-        counts = st.number_input("Counts", min_value=0)
+        batch = st.text_input("Batch ID")
+        counts = st.number_input("Counts")
         contamination = st.number_input("Contamination")
         benchmark = st.number_input("Benchmark")
         result = st.selectbox("Result", ["Pass", "Fail"])
@@ -273,29 +275,26 @@ if st.session_state.role in ["admin", "montdorensis"]:
                 batch_id, date, counts, contamination, benchmark, result
             )
             VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                batch_id, str(date), counts,
-                contamination, benchmark, result
-            ))
+            """, (batch, str(date), counts, contamination, benchmark, result))
             conn.commit()
             st.success("Saved")
 
 # -----------------------------
-# PHITOSEILUS ENTRY
+# PHITOSEILUS FORM
 # -----------------------------
-if st.session_state.role in ["admin", "phytoseilus"]:
+if role in ["admin", "phytoseilus"]:
 
-    st.title("Phytoseilus Entry")
+    st.title("Phytoseilus")
 
-    with st.form("phyto_form"):
+    with st.form("phyto"):
         date = st.date_input("Date")
-        batch_id = st.text_input("Batch ID")
+        batch = st.text_input("Batch ID")
         temp = st.number_input("Temperature")
         humidity = st.number_input("Humidity")
         morning = st.number_input("Morning Harvest")
         evening = st.number_input("Evening Harvest")
-        bench_g = st.number_input("Greenhouse Benchmark")
-        daily_bench = st.number_input("Daily Benchmark")
+        bench = st.number_input("Benchmark")
+        daily = st.number_input("Daily Benchmark")
         total = st.number_input("Total Harvest")
         result = st.selectbox("Result", ["Pass", "Fail"])
 
@@ -313,32 +312,27 @@ if st.session_state.role in ["admin", "phytoseilus"]:
                 result
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                batch_id, str(date),
-                temp, humidity,
-                morning, evening,
-                bench_g, daily_bench,
-                total, result
-            ))
+            """, (batch, str(date), temp, humidity,
+                  morning, evening, bench, daily, total, result))
             conn.commit()
             st.success("Saved")
 
 # -----------------------------
-# BIO MULCH ENTRY
+# BIO MULCH FORM
 # -----------------------------
-if st.session_state.role in ["admin", "bio_mulch"]:
+if role in ["admin", "bio_mulch"]:
 
-    st.title("Bio Mulch Entry")
+    st.title("Bio Mulch")
 
-    with st.form("bio_form"):
+    with st.form("bio"):
         date = st.date_input("Date")
-        batch_id = st.text_input("Batch ID")
-        cfus_ml = st.number_input("CFUs/ml", format="%e")
-        contamination = st.number_input("Contamination", format="%e")
-        produced = st.number_input("Bags Produced")
-        discarded = st.number_input("Bags Discarded")
-        target = st.number_input("Targeted Bags")
-        harvested = st.number_input("Bags Harvested")
+        batch = st.text_input("Batch ID")
+        cfus = st.number_input("CFUs/ml")
+        contamination = st.number_input("Contamination")
+        produced = st.number_input("Produced")
+        discarded = st.number_input("Discarded")
+        target = st.number_input("Target")
+        harvested = st.number_input("Harvested")
         result = st.selectbox("Result", ["Pass", "Fail"])
 
         if st.form_submit_button("Save"):
@@ -349,33 +343,60 @@ if st.session_state.role in ["admin", "bio_mulch"]:
                 targeted_bags, bags_harvested, result
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                batch_id, str(date), cfus_ml, contamination,
-                produced, discarded, target, harvested, result
-            ))
+            """, (batch, str(date), cfus, contamination,
+                  produced, discarded, target, harvested, result))
             conn.commit()
             st.success("Saved")
 
 # -----------------------------
-# USER MANAGEMENT
+# USER MANAGEMENT (ADMIN ONLY)
 # -----------------------------
 if st.session_state.role == "admin":
 
-    st.title("User Management")
+    st.title("👤 User Management")
 
-    with st.form("user_form"):
-        u = st.text_input("Username")
-        p = st.text_input("Password", type="password")
-        r = st.selectbox("Role", ["admin", "qc", "montdorensis", "bio_mulch", "phytoseilus"])
-        d = st.text_input("Department")
+    tab1, tab2 = st.tabs(["➕ Add User", "📋 View Users"])
 
-        if st.form_submit_button("Add"):
-            try:
-                cursor.execute("""
-                INSERT INTO users (username, password, role, department)
-                VALUES (?, ?, ?, ?)
-                """, (u, p, r, d))
-                conn.commit()
-                st.success("User added")
-            except sqlite3.IntegrityError:
-                st.error("Username already exists")
+    # ----------------- ADD USER -----------------
+    with tab1:
+        with st.form("user_form"):
+
+            u = st.text_input("Username")
+            p = st.text_input("Password", type="password")
+            r = st.selectbox("Role", [
+                "admin",
+                "qc",
+                "montdorensis",
+                "bio_mulch",
+                "phytoseilus"
+            ])
+            d = st.text_input("Department")
+
+            submit = st.form_submit_button("Add User")
+
+            if submit:
+                if u.strip() == "" or p.strip() == "":
+                    st.error("Username and password required")
+                else:
+                    try:
+                        cursor.execute("""
+                        INSERT INTO users (username, password, role, department)
+                        VALUES (?, ?, ?, ?)
+                        """, (u.strip(), p, r, d))
+
+                        conn.commit()
+                        st.success("User added successfully")
+                    except sqlite3.IntegrityError:
+                        st.error("❌ Username already exists")
+
+    # ----------------- VIEW USERS -----------------
+    with tab2:
+        df_users = pd.read_sql_query("SELECT id, username, role, department FROM users", conn)
+
+        st.dataframe(df_users, use_container_width=True)
+
+        st.download_button(
+            "Download Users Excel",
+            data=to_excel(df_users),
+            file_name="users.xlsx"
+        )
