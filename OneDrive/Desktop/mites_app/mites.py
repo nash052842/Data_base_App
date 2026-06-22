@@ -1,4 +1,13 @@
+import os
+from PIL import Image
 import streamlit as st
+
+BASE_DIR = os.path.dirname(__file__)
+img_path = os.path.join(BASE_DIR, "assets", "logo.png")
+
+img = Image.open(img_path)
+st.image(img)
+img.thumbnail((50,50))
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
@@ -146,7 +155,7 @@ if st.session_state.submitted:
             f"(Confidence: {best_percentage:.0f}%)"
         )
 
-    elif best_percentage >= 50:
+    elif best_percentage >= 70:
         st.info(
             f"ℹ️ Predator possibly resembles **{found.name}** "
             f"(Confidence: {best_percentage:.0f}%)"
